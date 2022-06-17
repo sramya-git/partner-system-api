@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns:db="http://www.mulesoft.org/schema/mule/db"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+	<db:config name="Database_Config" doc:name="Database Config" doc:id="3dd5321b-3773-47a1-9525-c63d561d3f1a" >
+		<db:my-sql-connection host="${db.host}" port="${db.port}" user="${db.user}" password="${db.password}" database="${db.database}" />
+	</db:config>
+	<flow name="get:\partners\(partnerId)" doc:id="d4ca547c-d8a1-46bd-950a-21a47b5a3a5f" >
+		<db:select doc:name="SELECT partner by Id" doc:id="8dcdf6e1-e9fc-4d9b-9158-1de618f9d0ec" config-ref="Database_Config">
+			<db:sql ><![CDATA[SELECT * FROM Partner WHERE partnerId = #[Vars.partnerId]]]></db:sql>
+		</db:select>
+		<choice doc:name="Found" doc:id="4505591b-e63a-4522-a3c2-ba5b5eafa7a0" >
+			<when expression="#[!isEmpty(payload)]">
+				<ee:transform doc:name="Transform Message to JSON map" doc:id="db8a5063-5d9e-4351-bdf2-0118f921698f" >
+					<ee:message >
+						<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+using(partner = payload[0])
+{
+	partnerId:     partner.partnerId,
+	name:          partner.name,
+	description:   partner.description,
+	email:         partner.email,
+	phone:         partner.phone,
+	url:           partner.url,
+	shippingPrice: partner.shippingPrice,
+	rating:        partner.rating
+}]]></ee:set-payload>
+					</ee:message>
+				</ee:transform>
+			</when>
+			<otherwise >
+				<ee:transform doc:name="404  Not Found" doc:id="cdd483ff-3aa6-4ed0-ba0b-b2bb609949f6" >
+					<ee:message >
+						<ee:set-payload ><![CDATA[%dw 2.0
+output application/java
+---
+{
+	"message": "Resource not found!"
+}]]></ee:set-payload>
+					</ee:message>
+				</ee:transform>
+			</otherwise>
+		</choice>
+	</flow>
+	<flow name="get:\productSearch" doc:id="a73400ee-810d-4c73-88f1-97c47611eb3d" >
+		<ee:transform doc:name="Transform Message" doc:id="e18e2fba-49bb-43c4-9b4e-0de474aeb842" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="query" ><![CDATA[%dw 2.0
+output application/java
+---
+attributes.queryParams]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<db:select doc:name="SELECT by productId, variantId and quantity only" doc:id="16c4ea7d-49e0-43a1-8600-95b39f74e087" config-ref="Database_Config">
+			<db:sql ><![CDATA[SELECT partner.*, product.productPrice, product.taxPrice, pp.availableCount 
+FROM Partner as partner 
+	INNER JOIN Partner_Product as pp ON (partner.partnerId=pp.Partner_partnerId) 
+	INNER JOIN Product as product ON (pp.Product_productId=product.productId AND pp.Product_variantId = product.variantId)
+WHERE product.productId = #[flowVars.query.productId] 
+	AND product.variantId = #[flowVars.query.variantId] 
+	AND pp.availableCount >= #[flowVars.query.quantity]
+LIMIT 100;]]></db:sql>
+		</db:select>
+		<logger level="INFO" doc:name="Logger" doc:id="cf2954bb-845a-43e7-a7f8-2340d28b6500" message="#[payload]"/>
+		<ee:transform doc:name="Transform Message" doc:id="bd24472c-0912-443c-bb66-4613184d8586" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+{
+	searchCriteria: {
+		productId: Vars.query.productId,
+		productVariant: Vars.query.variantId,
+		quantity: Vars.query.quantity as Number
+	},
+	results: payload map ( (result) ->
+		{
+			quantityInStock: result.availableCount,
+			productPrice:    result.productPrice,
+			tax:             result.taxPrice,
+			partnerInfo: {
+				partnerId:        result.partnerId,
+				name:             result.name,
+				description:      result.description,
+				email:            result.email,
+				phone:            result.phone,
+				url:         	  result.url,
+				shippingPrice:    result.shippingPrice,
+				rating:           result.rating
+			}
+		}
+	)
+}
+]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+	</flow>
+</mule>
